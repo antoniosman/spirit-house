@@ -1,20 +1,21 @@
 export const key = (a, b) => [a, b].sort().join('|');
 
-export function createSeason(players, relations, alliances) {
+export function createSeason(players, relations, alliances, couples = {}, permanentCouples = {}) {
   return {
     players: structuredClone(players).map(p => ({ ...p, wins: 0, out: false })),
-    relations: { ...relations }, alliances: structuredClone(alliances),
+    relations: { ...relations }, alliances: structuredClone(alliances), couples: { ...couples }, permanentCouples: { ...permanentCouples },
     week: 1, stage: 'hoh', previous: null, hoh: null, nominees: [],
     history: [], order: [], winner: null, twist: null, immune: null, romances: {},
-    doubleRemaining: false, returnUsed: false
+    doubleRemaining: false, returnUsed: false, abilityUsed: {}, playerHohId: null, thirdNomineeId: null, returnChoiceId: null
   };
 }
 
 export function advance(s, rng = Math.random) {
+  s.couples = s.couples || {}; s.permanentCouples = s.permanentCouples || {}; s.abilityUsed = s.abilityUsed || {};
   let alive = s.players.filter(p => !p.out);
   const get = id => s.players.find(p => p.id === id);
   const name = id => get(id).name;
-  const bond = (a, b) => (s.relations[key(a, b)] || 0) + (s.romances[key(a, b)] || 0) + s.alliances
+  const bond = (a, b) => (s.relations[key(a, b)] || 0) + (s.romances[key(a, b)] || 0) + (s.couples[key(a, b)] ? 12 : 0) + (s.permanentCouples[key(a, b)] ? 8 : 0) + s.alliances
     .filter(g => g.members.includes(a) && g.members.includes(b))
     .reduce((n, g) => n + g.loyalty / 2, 0);
   const choose = (ps, score) => ps.map(p => ({ p, v: score(p) + rng() * 12 }))
@@ -23,8 +24,26 @@ export function advance(s, rng = Math.random) {
     const e = { week: s.week, stage: s.stage, title, text, ids, ...extra };
     s.history.push(e); return e;
   };
+  const abilityFor = p => ({ tony: 'Μάγος', luna: 'Ξωτικό', rino: 'Λυκάνθρωπος', billy: 'Kitsune', elisa: 'Γοργόνα', evelyn: 'Νεράιδα του νερού' }[p.name.toLowerCase()] || null);
+  const triggerAbility = () => {
+    const pool = alive.filter(p => abilityFor(p) && !s.abilityUsed[p.id]);
+    if (!pool.length || rng() > .34) return null;
+    const actor = pool[Math.floor(rng() * pool.length)]; const ability = abilityFor(actor);
+    s.abilityUsed[actor.id] = true;
+    let text = `${actor.name} αποκαλύπτει την ικανότητά του: ${ability}.`;
+    if (actor.name.toLowerCase() === 'tony' || actor.name.toLowerCase() === 'evelyn') { s.immune = actor.id; text += ` Η ασπίδα προστατεύει τον ${actor.name} για αυτή την εβδομάδα.`; }
+    else if (actor.name.toLowerCase() === 'rino') { actor.wins += 2; text += ' Η αγριότητα του δίνει δύο νίκες δύναμης.'; }
+    else if (actor.name.toLowerCase() === 'luna' || actor.name.toLowerCase() === 'elisa') {
+      const target = alive.find(p => p.id !== actor.id); if (target) { s.relations[key(actor.id, target.id)] = Math.min(10, (s.relations[key(actor.id, target.id)] || 0) + 4); text += ` Η μαγεία ενώνει τον ${actor.name} με τον ${target.name}.`; }
+    } else if (actor.name.toLowerCase() === 'billy' && s.nominees.length) {
+      const candidates = alive.filter(p => p.id !== s.hoh && !s.nominees.includes(p.id)); const target = candidates[0];
+      if (target) { const changed = s.nominees[0]; s.nominees[0] = target.id; text += ` Ο καθρέφτης του Kitsune αλλάζει ${name(changed)} με ${target.name}.`; }
+    }
+    return event(`Ability unleashed: ${ability}`, text, [actor.id, ...(s.immune === actor.id ? [actor.id] : [])], { ability, dialogue: [{ speaker: actor.name, text }] });
+  };
+
   const scheduledTwist = () => {
-    if (alive.length <= 10 && s.order.length && !s.returnUsed) return 'return';
+    if (alive.length <= 10 && s.order.length >= 2 && !s.returnUsed) return 'return';
     if (alive.length <= 5) return null;
     if (s.week === 2) return 'triple';
     if (s.week === 3) return 'eclipse';
@@ -48,13 +67,18 @@ export function advance(s, rng = Math.random) {
   if (s.stage === 'hoh') {
     s.immune = null;
     if (!s.doubleRemaining) s.twist = scheduledTwist();
-    if (s.twist === 'return' && s.order.length) {
-      const returnedId = s.order.pop(); const returned = get(returnedId); returned.out = false;
-      s.twist = null; s.returnUsed = true;
-      return event('Ανατροπή: Η Πύλη ανοίγει', `${returned.name} επιστρέφει από τη Σκιά στο Spirit House. Μία δεύτερη ευκαιρία μπορεί να αλλάξει τα πάντα.`, [returned.id], { twist: 'return', returned: returned.id });
+    if (s.twist === 'return' && s.order.length >= 2) {
+      const pool = s.order.map(get).filter(Boolean);
+      const random = pool[Math.floor(rng() * pool.length)];
+      const chosen = pool.find(p => p.id === s.returnChoiceId && p.id !== random.id) || pool.find(p => p.id !== random.id);
+      const returned = [random, chosen].filter(Boolean); returned.forEach(p => { p.out = false; s.order = s.order.filter(id => id !== p.id); });
+      s.twist = null; s.returnUsed = true; s.returnChoiceId = null;
+      return event('Ανατροπή: Η Πύλη ανοίγει', `${returned.map(p => p.name).join(' και ')} επιστρέφουν από τη Σκιά. Ο ένας επιλέχθηκε από το κοινό και ο άλλος από την τύχη.`, returned.map(p => p.id), { twist: 'return', returned: returned.map(p => p.id) });
     }
     const eligible = alive.filter(p => p.id !== s.previous || alive.length === 3);
-    const p = choose(eligible, p => p.competition * .9 + p.strategy * .35);
+    const selectedHoh = eligible.find(x => x.id === s.playerHohId);
+    const p = selectedHoh || choose(eligible, x => x.competition * .9 + x.strategy * .35);
+    s.playerHohId = null;
     s.hoh = p.id; p.wins++;
     if (s.twist === 'immunity') {
       const pool = alive.filter(x => x.id !== p.id);
@@ -86,6 +110,10 @@ export function advance(s, rng = Math.random) {
     const candidates = alive.filter(p => p.id !== s.hoh && p.id !== s.immune);
     s.nominees = candidates.map(p => ({ p, v: -bond(s.hoh, p.id) + p.strategy * get(s.hoh).strategy / 16 + p.wins + rng() * 8 }))
       .sort((a, b) => b.v - a.v).slice(0, count).map(x => x.p.id);
+    if (count === 3 && s.thirdNomineeId && candidates.some(p => p.id === s.thirdNomineeId)) {
+      s.nominees[2] = s.thirdNomineeId;
+    }
+    s.thirdNomineeId = null;
     let title = count === 3 ? 'Ανατροπή: Τριπλή απειλή' : 'Τελετή υποψηφιοτήτων';
     let text = `${name(s.hoh)} θέτει σε κίνδυνο τους ${s.nominees.map(name).join(', ')}.`;
     if (s.twist === 'eclipse') {
@@ -119,6 +147,14 @@ export function advance(s, rng = Math.random) {
   }
 
   if (s.stage === 'house') {
+    const abilityEvent = triggerAbility();
+    if (abilityEvent) { s.stage = 'evict'; return abilityEvent; }
+    const coupleKeys = Object.keys(s.couples);
+    const activeCouples = coupleKeys.map(k => k.split('|').map(get)).filter(pair => pair.every(Boolean) && pair.every(p => !p.out));
+    if (activeCouples.length && rng() < .18) {
+      const pair = activeCouples[Math.floor(rng() * activeCouples.length)], k = key(pair[0].id, pair[1].id);
+      if (!s.permanentCouples[k]) { delete s.couples[k]; s.relations[k] = -4; return event('Δράμα στο Moon Room', `${pair[0].name} και ${pair[1].name} τσακώνονται και χωρίζουν. Η σχέση τους δεν ήταν permanent.`, pair.map(p => p.id), { dialogue: [{ speaker: pair[0].name, text: 'Δεν σε εμπιστεύομαι πια.' }, { speaker: pair[1].name, text: 'Τότε τελειώσαμε.' }], breakup: k }); }
+    }
     if (s.twist === 'sacrifice') {
       const volunteers = alive.filter(p => p.id !== s.hoh && !s.nominees.includes(p.id));
       if (volunteers.length) {
@@ -133,15 +169,15 @@ export function advance(s, rng = Math.random) {
     if (possibleRomance.length > 1 && rng() < .22) {
       const a = possibleRomance[Math.floor(rng() * possibleRomance.length)];
       const b = possibleRomance.filter(p => p.id !== a.id)[Math.floor(rng() * (possibleRomance.length - 1))];
-      const romanceKey = key(a.id, b.id); s.romances[romanceKey] = Math.min(10, (s.romances[romanceKey] || 0) + 4);
-      const e = event('Σπίθες στο Moon Room', `${a.name} και ${b.name} έρχονται πιο κοντά. Η νέα τους σχέση μπορεί να αλλάξει συμμαχίες, ψήφους και αποφάσεις.`, [a.id, b.id], { romance: romanceKey });
+      const romanceKey = key(a.id, b.id); if (!s.permanentCouples[romanceKey]) s.couples[romanceKey] = true; s.romances[romanceKey] = Math.min(10, (s.romances[romanceKey] || 0) + 4);
+      const e = event('Σπίθες στο Moon Room', `${a.name} και ${b.name} έρχονται πιο κοντά. Η νέα τους σχέση μπορεί να αλλάξει συμμαχίες, ψήφους και αποφάσεις.`, [a.id, b.id], { romance: romanceKey, dialogue: [{ speaker: a.name, text: 'Νιώθω ότι μπορώ να σου μιλήσω.' }, { speaker: b.name, text: 'Κράτα το μυστικό μας.' }] });
       s.stage = 'evict'; return e;
     }
     const a = alive[Math.floor(rng() * alive.length)];
     const b = alive.filter(p => p !== a)[Math.floor(rng() * (alive.length - 1))];
     const delta = rng() > .45 ? 2 : -2; const k = key(a.id, b.id);
     s.relations[k] = Math.max(-10, Math.min(10, (s.relations[k] || 0) + delta));
-    const e = event('Δωμάτιο των μυστικών', delta > 0 ? `${a.name} και ${b.name} έρχονται πιο κοντά μετά από μία ειλικρινή εξομολόγηση.` : `Η εξομολόγηση του ${a.name} φέρνει ένταση με ${b.name}. Η εμπιστοσύνη τους κλονίζεται.`, [a.id, b.id]);
+    const e = event('Δωμάτιο των μυστικών', delta > 0 ? `${a.name} και ${b.name} έρχονται πιο κοντά μετά από μία ειλικρινή εξομολόγηση.` : `Η εξομολόγηση του ${a.name} φέρνει ένταση με ${b.name}. Η εμπιστοσύνη τους κλονίζεται.`, [a.id, b.id], { dialogue: [{ speaker: a.name, text: delta > 0 ? 'Χαίρομαι που το είπαμε.' : 'Με πλήγωσες.' }, { speaker: b.name, text: delta > 0 ? 'Είμαστε μαζί σε αυτό.' : 'Δεν ήταν αυτό που εννοούσα.' }] });
     s.stage = 'evict'; return e;
   }
 
