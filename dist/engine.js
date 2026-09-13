@@ -5,7 +5,7 @@ export function createSeason(players, relations, alliances) {
     players: structuredClone(players).map(p => ({ ...p, wins: 0, out: false })),
     relations: { ...relations }, alliances: structuredClone(alliances),
     week: 1, stage: 'hoh', previous: null, hoh: null, nominees: [],
-    history: [], order: [], winner: null, twist: null, immune: null,
+    history: [], order: [], winner: null, twist: null, immune: null, romances: {},
     doubleRemaining: false, returnUsed: false
   };
 }
@@ -14,7 +14,7 @@ export function advance(s, rng = Math.random) {
   let alive = s.players.filter(p => !p.out);
   const get = id => s.players.find(p => p.id === id);
   const name = id => get(id).name;
-  const bond = (a, b) => (s.relations[key(a, b)] || 0) + s.alliances
+  const bond = (a, b) => (s.relations[key(a, b)] || 0) + (s.romances[key(a, b)] || 0) + s.alliances
     .filter(g => g.members.includes(a) && g.members.includes(b))
     .reduce((n, g) => n + g.loyalty / 2, 0);
   const choose = (ps, score) => ps.map(p => ({ p, v: score(p) + rng() * 12 }))
@@ -24,7 +24,7 @@ export function advance(s, rng = Math.random) {
     s.history.push(e); return e;
   };
   const scheduledTwist = () => {
-    if (s.week === 7 && s.order.length && !s.returnUsed) return 'return';
+    if (alive.length <= 10 && s.order.length && !s.returnUsed) return 'return';
     if (alive.length <= 5) return null;
     if (s.week === 2) return 'triple';
     if (s.week === 3) return 'eclipse';
@@ -37,12 +37,12 @@ export function advance(s, rng = Math.random) {
 
   if (s.winner) return null;
   if (alive.length === 2) {
-    const jury = s.order.slice(-Math.min(7, s.order.length)).map(get);
+    const jury = s.players.filter(p => p.out);
     const votes = jury.map(j => ({ voter: j.id, target: choose(alive, p => bond(j.id, p.id) + p.wins * 1.8 + p.strategy * .6 + p.social * .4).id }));
     const tally = alive.map(p => ({ p, n: votes.filter(v => v.target === p.id).length })).sort((a, b) => b.n - a.n);
     const win = tally[0].n === tally[1].n ? choose(alive, p => p.wins + p.social) : tally[0].p;
     s.winner = win.id; s.stage = 'final';
-    return event('Ο μεγάλος τελικός', `${win.name} κερδίζει τη σεζόν! Η κριτική επιτροπή ψήφισε με βάση σχέσεις, νίκες και στρατηγική.`, alive.map(p => p.id), { votes, tie: tally[0].n === tally[1].n });
+    return event('Ο μεγάλος τελικός', `${win.name} κερδίζει τη σεζόν! Όλοι όσοι αποχώρησαν ψήφισαν στον τελικό.`, alive.map(p => p.id), { votes, tie: tally[0].n === tally[1].n });
   }
 
   if (s.stage === 'hoh') {
@@ -129,6 +129,14 @@ export function advance(s, rng = Math.random) {
         s.previous = s.hoh; s.hoh = null; s.nominees = []; s.twist = null; s.week++; s.stage = 'hoh'; return e;
       }
     }
+    const possibleRomance = alive.filter(p => p.id !== s.hoh);
+    if (possibleRomance.length > 1 && rng() < .22) {
+      const a = possibleRomance[Math.floor(rng() * possibleRomance.length)];
+      const b = possibleRomance.filter(p => p.id !== a.id)[Math.floor(rng() * (possibleRomance.length - 1))];
+      const romanceKey = key(a.id, b.id); s.romances[romanceKey] = Math.min(10, (s.romances[romanceKey] || 0) + 4);
+      const e = event('Σπίθες στο Moon Room', `${a.name} και ${b.name} έρχονται πιο κοντά. Η νέα τους σχέση μπορεί να αλλάξει συμμαχίες, ψήφους και αποφάσεις.`, [a.id, b.id], { romance: romanceKey });
+      s.stage = 'evict'; return e;
+    }
     const a = alive[Math.floor(rng() * alive.length)];
     const b = alive.filter(p => p !== a)[Math.floor(rng() * (alive.length - 1))];
     const delta = rng() > .45 ? 2 : -2; const k = key(a.id, b.id);
@@ -146,7 +154,8 @@ export function advance(s, rng = Math.random) {
     const out = tie ? choose(nominees, p => -bond(s.hoh, p.id) + p.strategy * .3).id : counts[0].id;
     get(out).out = true; s.order.push(out);
     const continues = s.twist === 'double' && !s.doubleRemaining;
-    const text = `${name(out)}, η παραμονή σου στο Spirit House ολοκληρώνεται εδώ. Ψήφοι: ${counts.map(c => `${name(c.id)} ${c.n}`).join(' · ')}.${tie ? ` Ο αρχηγός ${name(s.hoh)} έλυσε την ισοψηφία.` : ''}${continues ? ' Οι πόρτες κλείνουν ξανά: ακολουθεί δεύτερος, αστραπιαίος κύκλος.' : ''}`;
+    const survivors = alive.length - 1; const milestone = survivors === 10 ? 'TOP 10' : survivors === 5 ? 'TOP 5' : survivors === 2 ? 'TOP 2' : `TOP ${survivors}`;
+    const text = `${name(out)}, η παραμονή σου στο Spirit House ολοκληρώνεται εδώ. Ψήφοι: ${counts.map(c => `${name(c.id)} ${c.n}`).join(' · ')}. Απομένουν ${survivors} παίκτες — ${milestone}.${tie ? ` Ο αρχηγός ${name(s.hoh)} έλυσε την ισοψηφία.` : ''}${continues ? ' Οι πόρτες κλείνουν ξανά: ακολουθεί δεύτερος, αστραπιαίος κύκλος.' : ''}`;
     const e = event(continues ? 'Πρώτη αποχώρηση — η νύχτα συνεχίζεται' : 'Η ώρα της αποχώρησης', text, [out], { votes, evicted: out, ...(continues ? { twist: 'double' } : {}) });
     s.previous = s.hoh; s.hoh = null; s.nominees = []; s.immune = null;
     if (continues) { s.doubleRemaining = true; s.stage = 'hoh'; }
