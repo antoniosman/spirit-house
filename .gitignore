@@ -1,0 +1,5 @@
+work/
+.sites-runtime/
+outputs/
+output/
+.playwright-cli/
