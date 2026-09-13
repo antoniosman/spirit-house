@@ -1,5 +1,5 @@
 import { key, createSeason, advance } from "./engine.js";
-const APP_VERSION = "2026.09.14.1";
+const APP_VERSION = "2026.09.14.2";
 const files = [
   "Alex.webp",
   "Billy.webp",
@@ -527,8 +527,8 @@ function showIntro(players, exitEvent = null) {
       await wait(1300);
       for (let i = 0; i < players.length && !stopped; i++) {
         const p = players[i];
-        const isExit = exitEvent?.evicted === p.id;
         const exitIndex = state.season.order.indexOf(p.id);
+        const isExit = p.out && exitIndex >= 0;
         const place =
           exitIndex >= 0 ? state.season.players.length - exitIndex : null;
         card.className = `intro-player ${isExit ? "intro-eliminated" : ""}`;
@@ -647,10 +647,10 @@ async function action(a) {
   if (a === "next") {
     const e = advance(state.season);
     save();
+    await reveal(e);
     if (e?.evicted) {
       await showIntro(state.season.players, e);
     }
-    await reveal(e);
     await showDialogue(e);
     render();
     return;

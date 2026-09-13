@@ -1,4 +1,4 @@
-const CACHE = "spirit-house-v7";
+const CACHE = "spirit-house-v8";
 const ASSETS = [
   "./",
   "index.html",
