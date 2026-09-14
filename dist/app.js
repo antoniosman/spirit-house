@@ -1,5 +1,5 @@
 import { key, createSeason, advance } from "./engine.js";
-const APP_VERSION = "2026.09.14.2";
+const APP_VERSION = "2026.09.14.3";
 const files = [
   "Alex.webp",
   "Billy.webp",
@@ -42,6 +42,8 @@ let state = {
     selected: defaults.slice(0, 12).map((p) => p.id),
     size: 12,
     relations: {},
+    bestFriends: {},
+    loveInterests: {},
     couples: {},
     permanentCouples: {},
     alliances: [],
@@ -152,26 +154,69 @@ function options(exclude) {
     .join("");
 }
 function relationsView() {
-  const pairs = Object.entries(state.couples || {});
-  return `<h2>Σχέσεις, ζευγάρια και δράμα</h2><p>Όρισε φίλους, εχθρούς ή ζευγάρια. Τα permanent ζευγάρια μένουν μαζί σε όλη τη σεζόν· τα υπόλοιπα μπορούν να χωρίσουν και να βρουν άλλον.</p><form id="relation-form" class="relation"><select name="a" aria-label="Πρώτος παίκτης">${options()}</select><select name="b" aria-label="Δεύτερος παίκτης">${selected()
+  const friendshipPairs = new Set([
+    ...Object.keys(state.relations || {}),
+    ...Object.keys(state.bestFriends || {}),
+  ]);
+  const romancePairs = new Set([
+    ...Object.keys(state.loveInterests || {}),
+    ...Object.keys(state.couples || {}),
+  ]);
+  const pairNames = (k) => {
+    const [aId, bId] = k.split("|");
+    return [
+      state.players.find((p) => p.id === aId),
+      state.players.find((p) => p.id === bId),
+    ];
+  };
+  return `<h2>Φιλίες και προσωπικές σχέσεις</h2><p>Η φιλία και το love interest λειτουργούν ανεξάρτητα. Δύο παίκτες μπορούν, για παράδειγμα, να είναι κολλητοί και ταυτόχρονα να έχουν love interest.</p><section class="relationship-section"><h3>🤝 Φιλίες</h3><form id="friendship-form" class="relation"><select name="a" aria-label="Πρώτος παίκτης">${options()}</select><select name="b" aria-label="Δεύτερος παίκτης">${selected()
     .map(
       (p, i) =>
         `<option value="${p.id}" ${i === 1 ? "selected" : ""}>${esc(p.name)}</option>`,
     )
     .join(
       "",
-    )}</select><select name="type" aria-label="Τύπος σχέσης"><option value="friend">Φίλοι (+4)</option><option value="enemy">Εχθροί (−8)</option><option value="couple">Ζευγάρι</option><option value="permanent">Permanent ζευγάρι</option><option value="single">Single / χωρισμός</option></select><button>Ορισμός</button></form>${
-    pairs
-      .map(([k]) => {
-        const ids = k.split("|"),
-          a = state.players.find((p) => p.id === ids[0]),
-          b = state.players.find((p) => p.id === ids[1]);
-        return a && b
-          ? `<div class="row alliance"><span>💞 ${esc(a.name)} ↔ ${esc(b.name)} ${state.permanentCouples?.[k] ? "· PERMANENT" : "· ΖΕΥΓΑΡΙ"}</span><button data-breakpair="${k}">Χωρισμός</button></div>`
+    )}</select><select name="type" aria-label="Τύπος φιλίας"><option value="friend">Φίλοι</option><option value="bestFriend">Κολλητοί</option><option value="enemy">Εχθροί</option><option value="neutral">Χωρίς φιλική σχέση</option></select><button>Ορισμός φιλίας</button></form>${
+    [...friendshipPairs]
+      .map((k) => {
+        const [a, b] = pairNames(k);
+        const value = state.relations?.[k] || 0;
+        const label = state.bestFriends?.[k]
+          ? "ΚΟΛΛΗΤΟΙ"
+          : value < 0
+            ? "ΕΧΘΡΟΙ"
+            : value > 0
+              ? "ΦΙΛΟΙ"
+              : "";
+        return a && b && label
+          ? `<div class="row alliance"><span>🤝 ${esc(a.name)} ↔ ${esc(b.name)} · ${label}</span><button data-delfriendship="${k}">Αφαίρεση</button></div>`
           : "";
       })
-      .join("") || '<p class="empty">Δεν έχει οριστεί ζευγάρι ακόμα.</p>'
-  }`;
+      .join("") || '<p class="empty">Δεν έχει οριστεί φιλία ακόμα.</p>'
+  }</section><section class="relationship-section"><h3>💞 Love & ζευγάρια</h3><form id="romance-form" class="relation"><select name="a" aria-label="Πρώτος παίκτης">${options()}</select><select name="b" aria-label="Δεύτερος παίκτης">${selected()
+    .map(
+      (p, i) =>
+        `<option value="${p.id}" ${i === 1 ? "selected" : ""}>${esc(p.name)}</option>`,
+    )
+    .join(
+      "",
+    )}</select><select name="type" aria-label="Τύπος ερωτικής σχέσης"><option value="loveInterest">Love interest</option><option value="couple">Ζευγάρι</option><option value="permanent">Permanent ζευγάρι</option><option value="single">Single / χωρισμός</option></select><button>Ορισμός σχέσης</button></form>${
+    [...romancePairs]
+      .map((k) => {
+        const [a, b] = pairNames(k);
+        const label = state.permanentCouples?.[k]
+          ? "PERMANENT ΖΕΥΓΑΡΙ"
+          : state.couples?.[k]
+            ? "ΖΕΥΓΑΡΙ"
+            : state.loveInterests?.[k]
+              ? "LOVE INTEREST"
+              : "";
+        return a && b && label
+          ? `<div class="row alliance"><span>💞 ${esc(a.name)} ↔ ${esc(b.name)} · ${label}</span><button data-breakpair="${k}">Χωρισμός</button></div>`
+          : "";
+      })
+      .join("") || '<p class="empty">Δεν έχει οριστεί ερωτική σχέση ακόμα.</p>'
+  }</section>`;
 }
 function alliancesView() {
   return `<h2>Ποιοι θα παίξουν μαζί;</h2><p>Δημιούργησε ομάδες με κοινό στόχο. Η αφοσίωση ενισχύει την προστασία μεταξύ μελών, χωρίς να εγγυάται τις αποφάσεις τους.</p><form id="alliance-form" class="alliance"><input name="name" placeholder="Όνομα συμμαχίας" aria-label="Όνομα συμμαχίας" maxlength="40" required><div class="chips">${selected()
@@ -228,6 +273,27 @@ function bind() {
         render();
       }),
   );
+  app.querySelectorAll("[data-delfriendship]").forEach(
+    (b) =>
+      (b.onclick = () => {
+        const k = b.dataset.delfriendship;
+        delete state.relations[k];
+        delete state.bestFriends[k];
+        save();
+        render();
+      }),
+  );
+  app.querySelectorAll("[data-breakpair]").forEach(
+    (b) =>
+      (b.onclick = () => {
+        const k = b.dataset.breakpair;
+        delete state.loveInterests[k];
+        delete state.couples[k];
+        delete state.permanentCouples[k];
+        save();
+        render();
+      }),
+  );
   app.querySelectorAll("[data-delalliance]").forEach(
     (b) =>
       (b.onclick = () => {
@@ -255,24 +321,39 @@ function bind() {
       n.focus();
       n.setSelectionRange(pos, pos);
     };
-  const rf = app.querySelector("#relation-form");
-  if (rf)
-    rf.onsubmit = (e) => {
+  const ff = app.querySelector("#friendship-form");
+  if (ff)
+    ff.onsubmit = (e) => {
       e.preventDefault();
-      const f = new FormData(rf),
+      const f = new FormData(ff),
         k = key(f.get("a"), f.get("b")),
         type = f.get("type");
       if (f.get("a") === f.get("b") || !f.get("a") || !f.get("b"))
         return toast("Διάλεξε δύο διαφορετικούς παίκτες.");
-      if (type === "couple" || type === "permanent") {
-        state.couples[k] = true;
-        if (type === "permanent") state.permanentCouples[k] = true;
-        state.relations[k] = 8;
-      } else if (type === "single") {
-        delete state.couples[k];
-        delete state.permanentCouples[k];
+      delete state.bestFriends[k];
+      if (type === "bestFriend") {
+        state.bestFriends[k] = true;
         state.relations[k] = 0;
-      } else state.relations[k] = type === "enemy" ? -8 : 4;
+      } else if (type === "neutral") delete state.relations[k];
+      else state.relations[k] = type === "enemy" ? -8 : 4;
+      save();
+      render();
+    };
+  const romanceForm = app.querySelector("#romance-form");
+  if (romanceForm)
+    romanceForm.onsubmit = (e) => {
+      e.preventDefault();
+      const f = new FormData(romanceForm),
+        k = key(f.get("a"), f.get("b")),
+        type = f.get("type");
+      if (f.get("a") === f.get("b") || !f.get("a") || !f.get("b"))
+        return toast("Διάλεξε δύο διαφορετικούς παίκτες.");
+      delete state.couples[k];
+      delete state.permanentCouples[k];
+      delete state.loveInterests[k];
+      if (type !== "single") state.loveInterests[k] = true;
+      if (type === "couple" || type === "permanent") state.couples[k] = true;
+      if (type === "permanent") state.permanentCouples[k] = true;
       save();
       render();
     };
@@ -420,12 +501,17 @@ function tone(final = false) {
   } catch {}
 }
 async function reveal(e) {
-  if (!state.cinema) return;
-  busy = true;
+  if (!e || !state.cinema) return;
   const s = state.season;
   const p = s.players.find(
-    (p) => p.id === (e.evicted || e.returned || s.winner || e.ids[0]),
+    (p) =>
+      p.id ===
+      (e.evicted ||
+        (Array.isArray(e.returned) ? e.returned[0] : e.returned) ||
+        s.winner ||
+        e.ids?.[0]),
   );
+  if (!p) return;
   const overlay = document.createElement("div");
   overlay.className = `reveal ${e.twist ? "twist-reveal" : ""}`;
   overlay.innerHTML = `<div class="reveal-glow"></div><div class="scanlines"></div><span class="eyebrow">${e.twist ? "⚡ THE HOUSE HAS A SECRET" : "SPIRIT HOUSE · LIVE"}</span><h2>${esc(e.title)}</h2><p class="suspense">${e.twist ? "Οι κανόνες μόλις άλλαξαν…" : e.evicted ? "Η απόφαση έχει παρθεί…" : s.winner ? "Το σπίτι έχει νικητή…" : "Η στιγμή της αποκάλυψης…"}</p><div class="reveal-person ${e.evicted ? "exit-person" : ""}"><img src="${esc(p.image)}" alt="${esc(p.name)}"><h1>${esc(p.name)}</h1><span>${e.evicted ? "ΑΠΟΧΩΡΕΙ" : s.winner ? "ΝΙΚΗΤΗΣ ΤΗΣ ΣΕΖΟΝ" : e.twist ? "ΑΝΑΤΡΟΠΗ" : "SPIRIT HOUSE"}</span></div><button class="skip">Συνέχεια ▷</button>`;
@@ -441,33 +527,51 @@ async function reveal(e) {
   overlay.classList.add("closing");
   await new Promise((r) => setTimeout(r, 350));
   overlay.remove();
-  busy = false;
+}
+function choiceInfo(kind, candidateIds) {
+  const s = state.season;
+  const alive = s.players.filter((p) => !p.out);
+  const eliminated = s.players.filter((p) => p.out);
+  const settings = {
+    hoh: {
+      pool: alive,
+      title: "Διάλεξε τον αρχηγό της εβδομάδας",
+      text: "Η επιλογή σου καθορίζει ποιος θα πάρει την εξουσία.",
+      field: "playerHohId",
+    },
+    third: {
+      pool: alive.filter(
+        (p) =>
+          p.id !== s.hoh && !s.nominees.includes(p.id) && p.id !== s.immune,
+      ),
+      title: "Το κοινό επιλέγει τον τρίτο υποψήφιο",
+      text: "Διάλεξε ποιον στέλνει το κοινό στην ψηφοφορία.",
+      field: "thirdNomineeId",
+    },
+    return: {
+      pool: eliminated,
+      title: "Το κοινό επιλέγει μία επιστροφή",
+      text: "Ο παίκτης που θα διαλέξεις επιστρέφει σίγουρα. Ο δεύτερος θα επιλεγεί τυχαία.",
+      field: "returnChoiceId",
+    },
+    publicSave: {
+      pool: alive,
+      title: "Η ψήφος του κοινού",
+      text: "Διάλεξε ποιον παίκτη σώζει το κοινό αυτή την εβδομάδα.",
+      field: "publicSaveChoiceId",
+    },
+  };
+  const info = settings[kind];
+  if (candidateIds?.length)
+    info.pool = info.pool.filter((p) => candidateIds.includes(p.id));
+  return info;
 }
 function chooseControl(kind) {
   const s = state.season;
   if (!s) return;
-  const alive = s.players.filter((p) => !p.out),
-    eliminated = s.players.filter((p) => p.out);
-  let pool = [],
-    title = "",
-    field = "";
-  if (kind === "hoh") {
-    pool = alive;
-    title = "Διάλεξε τον αρχηγό της εβδομάδας";
-    field = "playerHohId";
-  } else if (kind === "third") {
-    pool = alive.filter(
-      (p) => p.id !== s.hoh && !s.nominees.includes(p.id) && p.id !== s.immune,
-    );
-    title = "Διάλεξε τον τρίτο υποψήφιο";
-    field = "thirdNomineeId";
-  } else {
-    pool = eliminated;
-    title = "Διάλεξε τον παίκτη που επιστρέφει";
-    field = "returnChoiceId";
-  }
+  const { pool, title, text, field } = choiceInfo(kind);
   if (!pool.length) return toast("Δεν υπάρχουν διαθέσιμες επιλογές.");
-  modal.innerHTML = `<form id="choice-form"><div class="row"><h2>${title}</h2><button type="button" id="close">✕</button></div><p>Η επιλογή σου επηρεάζει τη συνέχεια της σεζόν.</p><select name="choice" required>${pool.map((p) => `<option value="${p.id}">${esc(p.name)}</option>`).join("")}</select><div class="row"><button type="button" id="random-choice">🎲 Τυχαία επιλογή</button><button class="primary">Επιβεβαίωση</button></div></form>`;
+  modal.innerHTML = `<form id="choice-form"><div class="row"><h2>${title}</h2><button type="button" id="close">✕</button></div><p>${text}</p><select name="choice" required>${pool.map((p) => `<option value="${p.id}">${esc(p.name)}</option>`).join("")}</select><div class="row"><button type="button" id="random-choice">🎲 Τυχαία επιλογή</button><button class="primary">Επιβεβαίωση</button></div></form>`;
   modal.showModal();
   modal.querySelector("#close").onclick = () => modal.close();
   modal.querySelector("#random-choice").onclick = () => {
@@ -485,6 +589,59 @@ function chooseControl(kind) {
     render();
     toast("Η επιλογή σου αποθηκεύτηκε.");
   };
+}
+
+function requestGameChoice(kind, candidateIds) {
+  return new Promise((resolve) => {
+    const s = state.season;
+    const { pool, title, text, field } = choiceInfo(kind, candidateIds);
+    if (!pool.length) return resolve(false);
+    modal.innerHTML = `<form id="choice-form"><div class="row"><h2>${title}</h2></div><p>${text}</p><div class="choice-cards">${pool.map((p, i) => `<label><input type="radio" name="choice" value="${p.id}" ${i === 0 ? "checked" : ""}><img src="${esc(p.image)}" alt=""><span>${esc(p.name)}</span></label>`).join("")}</div><div class="row"><button type="button" id="random-choice">🎲 Τυχαία επιλογή</button><button class="primary">Επιβεβαίωση επιλογής</button></div></form>`;
+    modal.showModal();
+    const complete = (id) => {
+      s[field] = id;
+      save();
+      modal.close();
+      resolve(true);
+    };
+    modal.querySelector("#random-choice").onclick = () =>
+      complete(pool[Math.floor(Math.random() * pool.length)].id);
+    modal.querySelector("form").onsubmit = (e) => {
+      e.preventDefault();
+      complete(new FormData(e.target).get("choice"));
+    };
+  });
+}
+
+async function advanceWithChoices() {
+  let e = advance(state.season);
+  while (e?.requiresChoice) {
+    const completed = await requestGameChoice(e.requiresChoice, e.candidates);
+    if (!completed) return null;
+    e = advance(state.season);
+  }
+  return e;
+}
+
+async function runGameAction(work) {
+  if (busy) return;
+  busy = true;
+  document.body.classList.add("game-busy");
+  try {
+    await work();
+  } catch (error) {
+    console.error(error);
+    document
+      .querySelectorAll(".reveal, .intro-overlay, .pov-overlay")
+      .forEach((x) => x.remove());
+    if (modal.open) modal.close();
+    toast("Η σκηνή διακόπηκε με ασφάλεια. Πάτησε ξανά για συνέχεια.");
+  } finally {
+    busy = false;
+    document.body.classList.remove("game-busy");
+    save();
+    render();
+  }
 }
 
 function showIntro(players, exitEvent = null) {
@@ -631,42 +788,44 @@ async function action(a) {
   }
   if (a === "start") {
     if (state.selected.length !== state.size) return;
-    state.season = createSeason(
-      selected(),
-      state.relations,
-      state.alliances,
-      state.couples || {},
-      state.permanentCouples || {},
-    );
-    save();
-    render();
-    await showIntro(selected());
-    await reveal({ title: "Οι πόρτες ανοίγουν", ids: [state.selected[0]] });
-    return;
+    return runGameAction(async () => {
+      state.season = createSeason(
+        selected(),
+        state.relations,
+        state.alliances,
+        state.couples || {},
+        state.permanentCouples || {},
+        state.bestFriends || {},
+        state.loveInterests || {},
+      );
+      save();
+      render();
+      await showIntro(selected());
+      await reveal({ title: "Οι πόρτες ανοίγουν", ids: [state.selected[0]] });
+    });
   }
   if (a === "next") {
-    const e = advance(state.season);
-    save();
-    await reveal(e);
-    if (e?.evicted) {
-      await showIntro(state.season.players, e);
-    }
-    await showDialogue(e);
-    render();
-    return;
+    return runGameAction(async () => {
+      const e = await advanceWithChoices();
+      if (!e) return;
+      save();
+      await reveal(e);
+      if (e.evicted) await showIntro(state.season.players, e);
+      await showDialogue(e);
+    });
   }
   if (a === "finish") {
     modal.innerHTML =
       '<h2>Μετάβαση στον τελικό;</h2><p>Θα προσομοιωθούν όλα τα υπόλοιπα επεισόδια. Θα μπορείς να τα δεις στο αρχείο.</p><div class="row"><button id="cancel">Πίσω</button><button class="primary" id="confirm">Τρέξε τη σεζόν</button></div>';
     modal.showModal();
     modal.querySelector("#cancel").onclick = () => modal.close();
-    modal.querySelector("#confirm").onclick = async () => {
+    modal.querySelector("#confirm").onclick = () => {
       modal.close();
-      let e;
-      while (!state.season.winner) e = advance(state.season);
-      save();
-      await reveal(e);
-      render();
+      runGameAction(async () => {
+        let e;
+        while (!state.season.winner) e = await advanceWithChoices();
+        await reveal(e);
+      });
     };
     return;
   }
@@ -821,6 +980,14 @@ document.querySelector("#update-app").onclick = () => checkForUpdate(true);
 await ready;
 state.couples = state.couples || {};
 state.permanentCouples = state.permanentCouples || {};
+state.bestFriends = state.bestFriends || {};
+state.loveInterests = state.loveInterests || {};
+if (state.season) {
+  state.season.bestFriends = state.season.bestFriends || {};
+  state.season.loveInterests = state.season.loveInterests || {};
+  state.season.awaitingPublicSave = state.season.awaitingPublicSave || false;
+  state.season.publicSaveChoiceId = state.season.publicSaveChoiceId || null;
+}
 render();
 if ("serviceWorker" in navigator) {
   navigator.serviceWorker

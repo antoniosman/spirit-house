@@ -6,6 +6,8 @@ export function createSeason(
   alliances,
   couples = {},
   permanentCouples = {},
+  bestFriends = {},
+  loveInterests = {},
 ) {
   return {
     players: structuredClone(players).map((p) => ({
@@ -17,6 +19,8 @@ export function createSeason(
     alliances: structuredClone(alliances),
     couples: { ...couples },
     permanentCouples: { ...permanentCouples },
+    bestFriends: { ...bestFriends },
+    loveInterests: { ...loveInterests },
     week: 1,
     stage: "hoh",
     previous: null,
@@ -34,12 +38,16 @@ export function createSeason(
     playerHohId: null,
     thirdNomineeId: null,
     returnChoiceId: null,
+    publicSaveChoiceId: null,
+    awaitingPublicSave: false,
   };
 }
 
 export function advance(s, rng = Math.random) {
   s.couples = s.couples || {};
   s.permanentCouples = s.permanentCouples || {};
+  s.bestFriends = s.bestFriends || {};
+  s.loveInterests = s.loveInterests || {};
   s.abilityUsed = s.abilityUsed || {};
   let alive = s.players.filter((p) => !p.out);
   const get = (id) => s.players.find((p) => p.id === id);
@@ -47,6 +55,8 @@ export function advance(s, rng = Math.random) {
   const bond = (a, b) =>
     (s.relations[key(a, b)] || 0) +
     (s.romances[key(a, b)] || 0) +
+    (s.bestFriends[key(a, b)] ? 8 : 0) +
+    (s.loveInterests[key(a, b)] ? 5 : 0) +
     (s.couples[key(a, b)] ? 12 : 0) +
     (s.permanentCouples[key(a, b)] ? 8 : 0) +
     s.alliances
@@ -169,15 +179,23 @@ export function advance(s, rng = Math.random) {
   }
 
   if (s.stage === "hoh") {
-    s.immune = null;
-    if (!s.doubleRemaining) s.twist = scheduledTwist();
+    const resumingPublicSave =
+      s.awaitingPublicSave && s.twist === "publicSave" && s.hoh;
+    if (!resumingPublicSave) {
+      s.immune = null;
+      if (!s.doubleRemaining) s.twist = scheduledTwist();
+    }
     if (s.twist === "return" && s.order.length >= 2) {
       const pool = s.order.map(get).filter(Boolean);
-      const random = pool[Math.floor(rng() * pool.length)];
-      const chosen =
-        pool.find((p) => p.id === s.returnChoiceId && p.id !== random.id) ||
-        pool.find((p) => p.id !== random.id);
-      const returned = [random, chosen].filter(Boolean);
+      const chosen = pool.find((p) => p.id === s.returnChoiceId);
+      if (!chosen)
+        return {
+          requiresChoice: "return",
+          candidates: pool.map((p) => p.id),
+        };
+      const randomPool = pool.filter((p) => p.id !== chosen.id);
+      const random = randomPool[Math.floor(rng() * randomPool.length)];
+      const returned = [chosen, random].filter(Boolean);
       returned.forEach((p) => {
         p.out = false;
         s.order = s.order.filter((id) => id !== p.id);
@@ -195,22 +213,40 @@ export function advance(s, rng = Math.random) {
     const eligible = alive.filter(
       (p) => p.id !== s.previous || alive.length === 3,
     );
-    const selectedHoh = eligible.find((x) => x.id === s.playerHohId);
-    const p =
-      selectedHoh ||
-      choose(eligible, (x) => x.competition * 0.9 + x.strategy * 0.35);
-    s.playerHohId = null;
-    s.hoh = p.id;
-    p.wins++;
+    let p;
+    if (resumingPublicSave) p = get(s.hoh);
+    else {
+      const selectedHoh = eligible.find((x) => x.id === s.playerHohId);
+      p =
+        selectedHoh ||
+        choose(eligible, (x) => x.competition * 0.9 + x.strategy * 0.35);
+      s.playerHohId = null;
+      s.hoh = p.id;
+      p.wins++;
+    }
     if (s.twist === "immunity") {
       const pool = alive.filter((x) => x.id !== p.id);
       s.immune = pool[Math.floor(rng() * pool.length)].id;
     }
-    if (s.twist === "publicSave" || s.twist === "secretRoom") {
+    if (s.twist === "publicSave") {
+      const pool = alive.filter((x) => x.id !== p.id);
+      const protectedPlayer = pool.find((x) => x.id === s.publicSaveChoiceId);
+      if (!protectedPlayer) {
+        s.awaitingPublicSave = true;
+        return {
+          requiresChoice: "publicSave",
+          candidates: pool.map((x) => x.id),
+        };
+      }
+      s.immune = protectedPlayer.id;
+      s.publicSaveChoiceId = null;
+      s.awaitingPublicSave = false;
+    }
+    if (s.twist === "secretRoom") {
       const pool = alive.filter((x) => x.id !== p.id);
       const protectedPlayer = pool[Math.floor(rng() * pool.length)];
       s.immune = protectedPlayer.id;
-      if (s.twist === "secretRoom") protectedPlayer.wins++;
+      protectedPlayer.wins++;
     }
     const twistText = s.doubleRemaining
       ? " Η νύχτα συνεχίζεται με έναν αστραπιαίο δεύτερο κύκλο."
@@ -282,7 +318,15 @@ export function advance(s, rng = Math.random) {
   if (s.stage === "nominate") {
     const count = s.twist === "triple" ? 3 : 2;
     const candidates = alive.filter((p) => p.id !== s.hoh && p.id !== s.immune);
+    if (count === 3 && !candidates.some((p) => p.id === s.thirdNomineeId))
+      return {
+        requiresChoice: "third",
+        candidates: candidates.map((p) => p.id),
+      };
+    const chosenThird =
+      count === 3 ? candidates.find((p) => p.id === s.thirdNomineeId) : null;
     s.nominees = candidates
+      .filter((p) => p.id !== chosenThird?.id)
       .map((p) => ({
         p,
         v:
@@ -292,15 +336,9 @@ export function advance(s, rng = Math.random) {
           rng() * 8,
       }))
       .sort((a, b) => b.v - a.v)
-      .slice(0, count)
+      .slice(0, count - (chosenThird ? 1 : 0))
       .map((x) => x.p.id);
-    if (
-      count === 3 &&
-      s.thirdNomineeId &&
-      candidates.some((p) => p.id === s.thirdNomineeId)
-    ) {
-      s.nominees[2] = s.thirdNomineeId;
-    }
+    if (chosenThird) s.nominees.push(chosenThird.id);
     s.thirdNomineeId = null;
     if (s.twist === "bloodMoon") {
       s.cursedNominee = s.nominees[Math.floor(rng() * s.nominees.length)];
@@ -382,7 +420,8 @@ export function advance(s, rng = Math.random) {
         k = key(pair[0].id, pair[1].id);
       if (!s.permanentCouples[k]) {
         delete s.couples[k];
-        s.relations[k] = -4;
+        delete s.loveInterests[k];
+        s.romances[k] = -4;
         return event(
           "Δράμα στο Moon Room",
           `${pair[0].name} και ${pair[1].name} τσακώνονται και χωρίζουν. Η σχέση τους δεν ήταν permanent.`,
@@ -431,7 +470,10 @@ export function advance(s, rng = Math.random) {
         Math.floor(rng() * (possibleRomance.length - 1))
       ];
       const romanceKey = key(a.id, b.id);
-      if (!s.permanentCouples[romanceKey]) s.couples[romanceKey] = true;
+      if (!s.permanentCouples[romanceKey]) {
+        if (s.loveInterests[romanceKey]) s.couples[romanceKey] = true;
+        s.loveInterests[romanceKey] = true;
+      }
       s.romances[romanceKey] = Math.min(10, (s.romances[romanceKey] || 0) + 4);
       const e = event(
         "Σπίθες στο Moon Room",
